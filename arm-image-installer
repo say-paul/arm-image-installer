@@ -42,6 +42,7 @@ Optional
 	--wifi-pass=PASS        - Wi-Fi password to configure
 	--wifi-security=TYPE    - Wi-Fi security type (wpa-psk, sae)
 	--hostname=NAME         - Set system hostname
+	--multicast             - Enable mDNS for hostname.local (requires --hostname)
 	-y              - Assumes yes, will not wait for confirmation
 
 Help
@@ -215,6 +216,9 @@ while [ $# -gt 0 ]; do
 				exit 1
 			fi
 			;;
+		--multicast)
+			MULTICAST=1
+			;;
 		--ign-url*)
                         if echo $1 | grep '=' >/dev/null ; then
                                 IGN_URL=$(echo $1 | sed 's/^--ign-url=//')
@@ -381,6 +385,12 @@ fi
 # check only one ignition source was added
 if [ -n "$IGNITION" ] && [ -n "$IGN_URL" ]; then
         echo "Error: Please pick one ignition source, local or url."
+        exit 1
+fi
+
+# multicast requires hostname
+if [ "$MULTICAST" = "1" ] && [ -z "$SET_HOSTNAME" ]; then
+	echo "Error: --multicast requires --hostname to be set."
 	exit 1
 fi
 
@@ -442,7 +452,11 @@ if [ "$WIFI_SSID" != "" ]; then
 fi
 # hostname to be set
 if [ "$SET_HOSTNAME" != "" ]; then
+	if [ "$MULTICAST" = "1" ]; then
+		echo "= Hostname: $SET_HOSTNAME.local (mDNS enabled)"
+	else
 		echo "= Hostname: $SET_HOSTNAME"
+	fi
 fi
 # User ssh key
 if [ "$SSH_KEY" != "" ]; then
@@ -831,6 +845,61 @@ fi
 if [ "$SET_HOSTNAME" != "" ]; then
 	echo "= Setting hostname: $SET_HOSTNAME"
 	echo "$SET_HOSTNAME" > ${PREFIX}/etc/hostname
+fi
+
+# Configure mDNS for hostname.local resolution
+if [ "$MULTICAST" = "1" ]; then
+	echo "= Enabling mDNS (multicast DNS) for $SET_HOSTNAME.local"
+
+	RESOLVED_CONF="${PREFIX}/etc/systemd/resolved.conf"
+	if [ -f "$RESOLVED_CONF" ]; then
+		if grep -q "^MulticastDNS=" "$RESOLVED_CONF"; then
+			sed -i 's/^MulticastDNS=.*/MulticastDNS=yes/' "$RESOLVED_CONF"
+		elif grep -q "^\[Resolve\]" "$RESOLVED_CONF"; then
+			sed -i '/^\[Resolve\]/a MulticastDNS=yes' "$RESOLVED_CONF"
+		else
+			printf "\n[Resolve]\nMulticastDNS=yes\n" >> "$RESOLVED_CONF"
+		fi
+	else
+		mkdir -p "$(dirname "$RESOLVED_CONF")"
+		cat > "$RESOLVED_CONF" <<-EOF
+[Resolve]
+MulticastDNS=yes
+EOF
+	fi
+
+	# Enable mDNS on Wi-Fi connection if configured
+	if [ "$WIFI_SSID" != "" ]; then
+		WIFI_CONN="${PREFIX}/etc/NetworkManager/system-connections/$FILENAME"
+		if [ -f "$WIFI_CONN" ]; then
+			if grep -q "^\[connection\]" "$WIFI_CONN"; then
+				sed -i '/^\[connection\]/a mdns=2' "$WIFI_CONN"
+			fi
+		fi
+	fi
+
+	# Create NetworkManager conf.d drop-in for default mDNS on new connections
+	mkdir -p "${PREFIX}/etc/NetworkManager/conf.d"
+	cat > "${PREFIX}/etc/NetworkManager/conf.d/mdns.conf" <<-EOF
+[connection]
+connection.mdns=2
+EOF
+
+	# Open firewall for mDNS (UDP 5353)
+	FIREWALLD_SERVICES="${PREFIX}/etc/firewalld/zones"
+	if [ -d "${PREFIX}/etc/firewalld" ]; then
+		mkdir -p "$FIREWALLD_SERVICES"
+		cat > "${FIREWALLD_SERVICES}/public.xml" <<-EOF
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>Public zone with mDNS enabled</description>
+  <service name="dhcpv6-client"/>
+  <service name="ssh"/>
+  <service name="mdns"/>
+</zone>
+EOF
+	fi
 fi
 
 # Add console
