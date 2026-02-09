@@ -41,6 +41,7 @@ Optional
 	--wifi-ssid=SSID        - Wi-Fi SSID to configure
 	--wifi-pass=PASS        - Wi-Fi password to configure
 	--wifi-security=TYPE    - Wi-Fi security type (wpa-psk, sae)
+	--hostname=NAME         - Set system hostname
 	-y              - Assumes yes, will not wait for confirmation
 
 Help
@@ -198,6 +199,18 @@ while [ $# -gt 0 ]; do
 			# Validate the security type
 			if [[ "$WIFI_SECURITY" != "wpa-psk" && "$WIFI_SECURITY" != "sae" ]]; then
 				echo "$(basename ${0}): Error - Invalid Wi-Fi security type: $WIFI_SECURITY"
+				usage
+				exit 1
+			fi
+			;;
+		--hostname*)
+			if echo $1 | grep '=' >/dev/null ; then
+				SET_HOSTNAME=$(echo $1 | sed 's/^--hostname=//')
+			elif [ -n "$2" ]; then
+				SET_HOSTNAME=$2
+				shift
+			else
+				echo "$(basename ${0}): Error - '--hostname' expects an argument"
 				usage
 				exit 1
 			fi
@@ -368,7 +381,7 @@ fi
 # check only one ignition source was added
 if [ -n "$IGNITION" ] && [ -n "$IGN_URL" ]; then
         echo "Error: Please pick one ignition source, local or url."
-        exit 1
+	exit 1
 fi
 
 # Last chance to back out
@@ -426,6 +439,10 @@ fi
 # wifi ssid to be added
 if [ "$WIFI_SSID" != "" ]; then
 	echo "= Wifi ssid: $WIFI_SSID will autoconnect on boot."
+fi
+# hostname to be set
+if [ "$SET_HOSTNAME" != "" ]; then
+		echo "= Hostname: $SET_HOSTNAME"
 fi
 # User ssh key
 if [ "$SSH_KEY" != "" ]; then
@@ -808,6 +825,12 @@ EOF
 
     # Set file permissions
     chmod 600 ${PREFIX}/etc/NetworkManager/system-connections/$FILENAME
+fi
+
+# Configure hostname
+if [ "$SET_HOSTNAME" != "" ]; then
+	echo "= Setting hostname: $SET_HOSTNAME"
+	echo "$SET_HOSTNAME" > ${PREFIX}/etc/hostname
 fi
 
 # Add console
